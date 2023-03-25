@@ -10,6 +10,8 @@ import csv
 import sys
 import time
 import pandas as pd
+from algorithm.min_dis import dijkstra
+from algorithm.dicts import graph_dict
 
 start = time.time()
 
@@ -57,7 +59,7 @@ class Model:
         self.time_matrix = {}
         self.number_of_demands = 0
         self.vehicle_cap = 0
-        self.vehicle_speed = 1
+        self.vehicle_speed = 500
         self.rand_d_max = 0.4
         self.rand_d_min = 0.1
         self.worst_d_max = 5
@@ -78,6 +80,7 @@ class Model:
         self.r_history_select = np.zeros(3)
         self.r_history_score = np.zeros(3)
         self.opt_type = 1
+        self.demand_list_N = []
 
 
 def readFromDict(demands, depots, model):
@@ -104,25 +107,28 @@ def readFromDict(demands, depots, model):
         model.depot_id_list.append(node.id)
 
 
+
 # 计算距离时间矩阵
 def calDistanceTimeMatrix(model):
     for i in range(len(model.demand_id_list)):
-        from_node_id = model.demand_id_list[i]
-        for j in range(i + 1, len(model.demand_id_list)):
-            to_node_id = model.demand_id_list[j]
-            dist = math.sqrt((model.demand_dict[from_node_id].x_coord - model.demand_dict[to_node_id].x_coord) ** 2
-                             + (model.demand_dict[from_node_id].y_coord - model.demand_dict[to_node_id].y_coord) ** 2)
-            model.distance_matrix[from_node_id, to_node_id] = dist
-            model.distance_matrix[to_node_id, from_node_id] = dist
-            model.time_matrix[from_node_id, to_node_id] = math.ceil(dist / model.vehicle_speed)
-            model.time_matrix[to_node_id, from_node_id] = math.ceil(dist / model.vehicle_speed)
+        from_node_id = model.demand_list_N[i].node_id
+        from_node_chaxun = model.demand_id_list[i]
+        for j in range(i + 1 , len(model.demand_id_list)):
+            to_node_id = model.demand_list_N[j].node_id
+            to_node_chaxun = model.demand_id_list[j]
+            dist = dijkstra(graph_dict, from_node_id, to_node_id, 2)
+            model.distance_matrix[from_node_chaxun, to_node_chaxun] = dist
+            model.distance_matrix[to_node_chaxun, from_node_chaxun] = dist
+            model.time_matrix[from_node_chaxun, to_node_chaxun] = math.ceil(dist / model.vehicle_speed)
+            model.time_matrix[to_node_chaxun, from_node_chaxun] = math.ceil(dist / model.vehicle_speed)
         for _, depot in model.depot_dict.items():
-            dist = math.sqrt((model.demand_dict[from_node_id].x_coord - depot.x_coord) ** 2
-                             + (model.demand_dict[from_node_id].y_coord - depot.y_coord) ** 2)
-            model.distance_matrix[from_node_id, depot.id] = dist
-            model.distance_matrix[depot.id, from_node_id] = dist
-            model.time_matrix[from_node_id, depot.id] = math.ceil(dist / model.vehicle_speed)
-            model.time_matrix[depot.id, from_node_id] = math.ceil(dist / model.vehicle_speed)
+            dist = dijkstra(graph_dict, from_node_id, depot.id, 2)
+            # dist = math.sqrt((model.demand_dict[from_node_id].x_coord - depot.x_coord) ** 2
+            #                  + (model.demand_dict[from_node_id].y_coord - depot.y_coord) ** 2)
+            model.distance_matrix[from_node_chaxun, depot.id] = dist
+            model.distance_matrix[depot.id, from_node_chaxun] = dist
+            model.time_matrix[from_node_chaxun, depot.id] = math.ceil(dist / model.vehicle_speed)
+            model.time_matrix[depot.id, from_node_chaxun] = math.ceil(dist / model.vehicle_speed)
 
 
 def selectDepot(route, depot_dict, model):
@@ -202,9 +208,9 @@ def extractRoutes(node_id_list, Pred, model):
 
 def splitRoutes(node_id_list, model):
     depot = model.depot_id_list[0]
-    V = {id: float('inf') for id in model.demand_id_list}
+    V = {id: float('inf') for id in model.demand_id_list}#V好像存储的是cost
     V[depot] = 0
-    Pred = {id: depot for id in model.demand_id_list}
+    Pred = {id: depot for id in model.demand_id_list}#pred好像存储的是路径
     for i in range(len(node_id_list)):
         n_1 = node_id_list[i]
         demand = 0
@@ -216,13 +222,13 @@ def splitRoutes(node_id_list, model):
             demand = demand + model.demand_dict[n_2].demand
             if n_1 == n_2:
                 arrival = max(model.demand_dict[n_2].start_time,
-                              model.depot_dict[depot].start_time + model.time_matrix[depot, n_2])
-                departure = arrival + model.demand_dict[n_2].service_time
-                if model.opt_type == 0:
+                              model.depot_dict[depot].start_time + model.time_matrix[depot, n_2])#开始服务时间
+                departure = arrival + model.demand_dict[n_2].service_time#离开时间
+                if model.opt_type == 0:#计算成本
                     cost = model.distance_matrix[depot, n_2] * 2
                 else:
                     cost = model.time_matrix[depot, n_2] * 2
-            else:
+            else:#如果不是一个节点
                 n_3 = node_id_list[j - 1]
                 arrival = max(departure + model.time_matrix[n_3, n_2], model.demand_dict[n_2].start_time)
                 departure = arrival + model.demand_dict[n_2].service_time
@@ -457,7 +463,7 @@ def plotObj(obj_list):
     plt.ylabel('Obj Value')
     plt.grid()
     plt.xlim(1, len(obj_list) + 1)
-    plt.show()
+    #plt.show()
 
 
 def outPut(model):
@@ -501,12 +507,13 @@ def plotRoutes(model):
             plt.plot(x_coord, y_coord, marker='o', color='b', linewidth=0.5, markersize=5)
     plt.xlabel('x_coord')
     plt.ylabel('y_coord')
-    plt.show()
+    #plt.show()
 
 
 def alns(demands, depots, rand_d_max, rand_d_min, worst_d_min, worst_d_max, regret_n, r1, r2, r3, rho, phi,
          epochs, pu, v_cap,
-         v_speed, opt_type):
+         v_speed, opt_type, demand_list_N
+        ):
     """
     :param demand_file: demand file path
     :param depot_file: depot file path
@@ -544,6 +551,7 @@ def alns(demands, depots, rand_d_max, rand_d_min, worst_d_min, worst_d_max, regr
     model.vehicle_speed = v_speed
     # readCSVFile(demand_file, depot_file, model)
     readFromDict(demands, depots, model)
+    model.demand_list_N = demand_list_N
     calDistanceTimeMatrix(model)
     history_best_obj = []
     sol = Sol()

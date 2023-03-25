@@ -33,7 +33,8 @@ class Service(models.Model):
     """
     Service model
     """
-    # service_id = models.CharField(max_length=32, primary_key=True, verbose_name="服务号")
+    #service_id = models.CharField(max_length=32, primary_key=True, verbose_name="服务号")
+    id = models.CharField(max_length=32, primary_key=True, verbose_name="服务号")
     flight = models.ForeignKey('Flight', related_name='Service_flight', on_delete=models.SET_NULL, null=True,
                                blank=True,
                                verbose_name="航班号")

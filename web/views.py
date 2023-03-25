@@ -5,6 +5,10 @@ from algorithm.time_window import time_arrange_small
 from algorithm.dicts import *
 from algorithm.constants import *
 from algorithm.alns_v3 import alns
+from django.http import HttpResponse, JsonResponse
+from django.forms.models import model_to_dict
+import json
+import gc
 
 
 # Create your views here.
@@ -15,33 +19,64 @@ def index(request):
 
 
 def flights(request):
-    flights_list = Flight.objects.all()
-    print(flights_list)
-    context = {'flights_list': flights_list}
-    return render(request, 'web/flights.html', context)
+    if request.method == 'GET':
+        flights_list = Flight.objects.all()
+        # print(flights_list)
+        # context = {'flights_list': flights_list}
+        # return render(request, 'web/flights.html', context)
+        return JsonResponse([model_to_dict(item) for item in flights_list], safe=False)
+    elif request.method == 'POST':
+        new_flight = json.loads(request.body)
+        New_Flight = Flight(
+            flight_id = new_flight['flight_id'],
+            aircraft_id  = new_flight['aircraft_id'],
+            aircraft_type  = new_flight['aircraft_type'],
+            seats_num = new_flight['seats_num'],
+            passenger_num =  new_flight['passenger_num'],
+            flight_type =  new_flight['flight_type'],
+            parking_id =  new_flight['parking_id'],
+            on_block_time =  new_flight['on_block_time'],
+            off_block_time =  new_flight['off_block_time'],
+            is_served = new_flight['is_served']
+        )
+        New_Flight.save()#这样算是在数据库里添加新航班了吗？
+        return JsonResponse(new_flight)
 
 
 def flight_detail(request, flight_id):
-    flight = get_object_or_404(Flight, pk=flight_id)
-    print(flight.__dict__)
-    context = {'flight_dict': flight.__dict__}
-    return render(request, 'web/flight_detail.html', context)
+
+    if request.method == 'DELETE':
+        flight = get_object_or_404(Flight, pk=flight_id)
+        print(flight.__dict__)
+        context = {'flight_dict': flight.__dict__}
+        return render(request, 'web/flight_detail.html', context)
 
 
 def services_generation(request):
     if request.method == 'POST':
+        now_service = Service.objects.filter(service_vehicle_num = 1)
+        for per_s in now_service:
+            per_s.delete()
         print('Service generation')
         # Flight.objects.filter(is_served=True).update(is_served=False)
-        flights_unserved = Flight.objects.filter(~Q(is_served=True))
+        flights_unserved = Flight.objects.filter(~Q(is_served=False))
 
-        print('flights_unserved:', flights_unserved)
+        #print('flights_unserved:', flights_unserved)
+        service_list = []
+        no = 1
         for flight in flights_unserved:
             services_list = time_arrange_small(flight.on_block_time, flight.off_block_time)
             for service_type, time_window in services_list.items():
                 print(service_type)
                 print(time_window)
-                parking_node = RoadNodes.objects.get(node_function=flight.parking_id)
-                service = Service(flight=flight, service_type=service_type, earliest_start_time=time_window[0],
+
+                try:
+                    parking_node = RoadNodes.objects.get(node_function = flight.parking_id)
+                except Exception as e:
+                    print(flight.flight_id)
+                    pass
+                service = Service( id = no,
+                    flight=flight, service_type=service_type, earliest_start_time=time_window[0],
                                   latest_start_time=time_window[1],
                                   minimum_duration=service_minimum_duration_dict[service_type],
                                   maximum_duration=service_maximum_duration_dict[service_type],
@@ -51,12 +86,14 @@ def services_generation(request):
                                   service_vehicle_num=service_vehicle_num, service_start_node=parking_node,
                                   service_delay_time=0,
                                   service_end_node=parking_node)
-                print(service)
+                no += 1
+                service_list.append(model_to_dict(service))
                 service.save()
         # return redirect('web:service_generation')
+        print(len(service_list))
         flights_unserved.update(is_served=True)
-    return render(request, 'web/flights.html')
-
+        # return render(request, 'web/flights.html')
+        return JsonResponse(service_list, safe=False)
 
 def services(request):
     services_list = Service.objects.all()
@@ -75,7 +112,7 @@ def service_detail(request, service_id):
 def vehicle_scheduling(request):
     if request.method == 'POST':
         print('Vehicle scheduling')
-        service_type = 'QJ'
+        service_type = 'QY'
         VehiclePath.objects.all().delete()
         Service.objects.filter(is_scheduled=True).update(is_scheduled=False)  # 重置一下，测试用
         services_unscheduled = Service.objects.filter(
@@ -104,34 +141,41 @@ def vehicle_scheduling(request):
                            'end_time': end_time})
 
         demands = []
+        demand_dict = []
         for service in services_unscheduled:
-            service_id = service.id
+            service_node = service.id
+
             x_coord = service.service_start_node.node_position_x
             y_coord = service.service_start_node.node_position_y
             demand = 1
             start_time = service.earliest_start_time
             end_time = service.latest_start_time
             service_time = int((service.minimum_duration + service.maximum_duration) / 2)
-            demands.append({'service_id': service_id, 'x_coord': x_coord, 'y_coord': y_coord, 'demand': demand,
+            demands.append({'service_id': service_node, 'x_coord': x_coord, 'y_coord': y_coord, 'demand': demand,
                             'start_time': start_time,
                             'end_time': end_time, 'service_time': service_time})
+            demand_dict.append(service.service_start_node)
 
         cost_of_time, cost_of_distance, opt_type, obj, route_list, timetable_list = alns(
             demands=demands, depots=depots, rand_d_max=0.4, rand_d_min=0.1,
             worst_d_min=5, worst_d_max=20, regret_n=5, r1=30, r2=20, r3=10, rho=0.5,
-            phi=0.9, epochs=1, pu=5, v_cap=vehicle_capacity, v_speed=400, opt_type=1)
+            phi=0.9, epochs=3, pu=3, v_cap=vehicle_capacity, v_speed=400, opt_type=1, demand_list_N = demand_dict)
 
         vehicle_scheduled_num = len(timetable_list)
         vehicle_scheduled = vehicle_available[0:vehicle_scheduled_num]
         print('vehicle_scheduled_need:', vehicle_scheduled_num)
         print('vehicle_scheduled:', vehicle_scheduled)
+        print('route_list', route_list)
         print('vehicle_scheduled_num:', len(vehicle_scheduled))
+
+        Vehiclepath_dict = {} # 键值对为车辆-路径
 
         for i in range(vehicle_scheduled_num):
             timetable = timetable_list[i]
             route = route_list[i]
             vehicle = vehicle_scheduled[i]
             deport = RoadNodes.objects.get(node_id=route[0])
+            Vehiclepath_dict[vehicle.vehicle_id] = []
 
             for j in range(len(route)):
                 node_arrival_time, node_departure_time = timetable[j]
@@ -144,10 +188,12 @@ def vehicle_scheduling(request):
                     vehicle_path = VehiclePath(vehicle=vehicle, service=service, node=node,
                                                node_arrival_time=node_arrival_time,
                                                node_departure_time=node_departure_time)
+                Vehiclepath_dict[vehicle.vehicle_id].append(model_to_dict(vehicle_path))
                 vehicle_path.save()
 
         services_unscheduled.update(is_scheduled=True)
-    return render(request, 'web/services.html')
+        return JsonResponse(Vehiclepath_dict)
+        # return render(request, 'web/services.html')
 
 
 def vehicles(request):
