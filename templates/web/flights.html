@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Flights</title>
+</head>
+<body>
+
+<h1>Flights</h1>
+
+<form action="/services_generation" method="post">
+    {% csrf_token %}
+    <input type="submit" value="services_generation">
+</form>
+
+{% if flights_list %}
+    <ul>
+        {% for flight in flights_list %}
+            <li><a href="/flights/{{ flight.flight_id }}/">{{ flight.flight_id }}</a></li>
+            <br>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No flight are available.</p>
+{% endif %}
+
+
+</body>
+</html>

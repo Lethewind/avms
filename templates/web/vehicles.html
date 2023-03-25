@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vehicles</title>
+</head>
+<body>
+{% if vehicles_list %}
+    <ul>
+        {% for vehicle in vehicles_list %}
+            <li><a href="/vehicles/{{ vehicle.vehicle_id }}/">{{ vehicle.vehicle_id }}</a></li>
+            <br>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No vehicle are available.</p>
+{% endif %}
+</body>
+</html>

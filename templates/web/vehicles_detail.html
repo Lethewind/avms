@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vehicle</title>
+</head>
+<body>
+{% if vehicle_dict %}
+    <ul>
+        {% for key,value in vehicle_dict.items %}
+            <li>{{ key }}<br>{{ value }}</li>
+        {% endfor %}
+        <li><a href="/vehicles/{{ vehicle_dict.vehicle_id }}/path/">{{ vehicle_dict.vehicle_id }} - vehicle_path_list</a></li>
+    </ul>
+{% else %}
+    <p>No (key, value) are available.</p>
+{% endif %}
+
+</body>
+</html>

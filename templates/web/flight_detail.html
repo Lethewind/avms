@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Flights</title>
+</head>
+<body>
+{% if flight_dict %}
+    <ul>
+        {% for key,value in flight_dict.items %}
+            <li>{{ key }}<br>{{ value }}</li>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No (key, value) are available.</p>
+{% endif %}
+</body>
+</html>

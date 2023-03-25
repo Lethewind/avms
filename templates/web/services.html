@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Services</title>
+</head>
+<body>
+
+<h1>Service</h1>
+
+<form action="/vehicle_scheduling" method="post">
+    {% csrf_token %}
+    <input type="submit" value="vehicle_scheduling">
+</form>
+
+{% if services_list %}
+    <ul>
+        {% for service in services_list %}
+            <li><a href="/services/{{ service.id }}/">{{ service.id }}</a>
+                <p>{{ service.flight_id }}</p></li>
+            <br>
+        {% endfor %}
+    </ul>
+{% else %}
+    <p>No service are available.</p>
+{% endif %}
+</body>
+</html>
