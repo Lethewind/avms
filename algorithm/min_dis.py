@@ -1,6 +1,7 @@
 import heapq
 
-#输入示例：
+
+# 输入示例：
 # 定义图的字典表示
 # graph = {
 #     'A': {'B': 5, 'C': 2},
@@ -51,3 +52,5 @@ def dijkstra(graph, start, end, opt):
         return dist[end], path
     if opt == 2:
         return dist[end]
+    if opt == 3:
+        return path
