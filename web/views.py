@@ -3,12 +3,14 @@ import json
 
 from django.db.models import Q
 from django.forms.models import model_to_dict
-from django.http import JsonResponse
+from django.http import JsonResponse, Http404
 from django.shortcuts import render, get_object_or_404
 
 from algorithm.alns_v3 import alns
 from algorithm.constants import *
 from algorithm.dicts import *
+from algorithm.min_dis import dijkstra
+from algorithm.route_inf_cal import cal_all_windows
 from algorithm.time_window import time_arrange_small
 from web.models import *
 from web.serializers import *
@@ -68,7 +70,7 @@ def services_generation(request):
                                   service_vehicle_type=service_vehicle_dict[service_type],
                                   service_vehicle_num=service_vehicle_num, service_start_node=parking_node,
                                   service_delay_time=0,
-                                  service_end_node=parking_node)
+                                  service_end_node=parking_node, is_finished=False)
                 no += 1
                 service_list.append(model_to_dict(service))
                 service.save()
@@ -96,7 +98,7 @@ def service_detail(request, service_id):
 def vehicle_scheduling(request):
     if request.method == 'POST':
         print('Vehicle scheduling')
-        service_type = 'QY'
+        service_type = 'QJ'
         VehiclePath.objects.all().delete()
         Service.objects.filter(is_scheduled=True).update(is_scheduled=False)  # 重置一下，测试用
         services_unscheduled = Service.objects.filter(
@@ -145,16 +147,20 @@ def vehicle_scheduling(request):
             worst_d_min=5, worst_d_max=20, regret_n=5, r1=30, r2=20, r3=10, rho=0.5,
             phi=0.9, epochs=3, pu=3, v_cap=vehicle_capacity, v_speed=400, opt_type=1, demand_list_N=demand_dict)
 
-        vehicle_scheduled_num = len(timetable_list)
-        vehicle_scheduled = vehicle_available[0:vehicle_scheduled_num]
-        print('vehicle_scheduled_need:', vehicle_scheduled_num)
+        vehicle_scheduled_need = len(timetable_list)
+
+        if vehicle_scheduled_need > vehicle_capacity:
+            return JsonResponse({'scheduling_status': 0})
+
+        vehicle_scheduled = vehicle_available[0:vehicle_scheduled_need]
+        print('vehicle_capacity:', vehicle_capacity)
+        print('vehicle_scheduled_need:', vehicle_scheduled_need)
         print('vehicle_scheduled:', vehicle_scheduled)
         print('route_list', route_list)
-        print('vehicle_scheduled_num:', len(vehicle_scheduled))
 
         Vehiclepath_dict = {}  # 键值对为车辆-路径
 
-        for i in range(vehicle_scheduled_num):
+        for i in range(vehicle_scheduled_need):
             timetable = timetable_list[i]
             route = route_list[i]
             vehicle = vehicle_scheduled[i]
@@ -174,6 +180,8 @@ def vehicle_scheduling(request):
                                                node_departure_time=node_departure_time)
                 Vehiclepath_dict[vehicle.vehicle_id].append(model_to_dict(vehicle_path))
                 vehicle_path.save()
+
+            get_vehicle_true_path(vehicle.vehicle_id)
 
         services_unscheduled.update(is_scheduled=True)
         return JsonResponse(Vehiclepath_dict)
@@ -204,43 +212,54 @@ def vehicle_detail(request, vehicle_id):
     return JsonResponse(context, safe=False)
 
 
-def vehicle_path(request, vehicle_id):
+def get_vehicle_true_path(vehicle_id):
+    vehicle = get_object_or_404(Vehicle, pk=vehicle_id)
+    vehicle_path = VehiclePath.objects.filter(vehicle=vehicle)
+    onepath_inf = []
+    onepath_window = []
+    for per_path in vehicle_path:
+        onepath_inf.append(per_path.node_id)
+        onepath_window.append([per_path.node_arrival_time, per_path.node_departure_time])
+    road_dict = {}
+    road_all = RoadSections.objects.all()
+    for per_road in road_all:
+        road_dict.setdefault(per_road.section_end_node_id, {})
+        road_dict[per_road.section_end_node_id].setdefault(per_road.section_start_node_id, per_road)
+        road_dict.setdefault(per_road.section_start_node_id, {})
+        road_dict[per_road.section_start_node_id].setdefault(per_road.section_end_node_id, per_road)
+
+    all_path, all_window = cal_all_windows(graph_dict, onepath_inf, onepath_window, road_dict)
+
+    print(all_path)
+    print(all_window)
+
+    # for per_path in vehicle_path:
+    #     per_path.delete()
+
+    for i in range(len(all_path)):
+        node = RoadNodes.objects.get(node_id=all_path[i])
+
+        if VehiclePath.objects.filter(vehicle=vehicle, node=node).exists():
+            pass
+
+        node_arrival_time = all_window[i][0]
+        node_departure_time = all_window[i][1]
+        vehicle_true_path = VehiclePath(
+            vehicle=vehicle, node=node, node_arrival_time=node_arrival_time,
+            node_departure_time=node_departure_time
+        )
+        vehicle_true_path.save()
+
+
+def vehicle_path_detail(request, vehicle_id):
     if request.method == 'POST':
         vehicle = get_object_or_404(Vehicle, pk=vehicle_id)
-        vehicle_path = VehiclePath.objects.filter(vehicle=vehicle)
-        onepath_inf = []
-        onepath_window = []
-        for per_path in vehicle_path:
-            onepath_inf.append(per_path.node_id)
-            onepath_window.append([per_path.node_arrival_time, per_path.node_departure_time])
-        road_dict = {}
-        road_all = RoadSections.objects.all()
-        for per_road in road_all:
-            road_dict.setdefault(per_road.section_end_node_id, {})
-            road_dict[per_road.section_end_node_id].setdefault(per_road.section_start_node_id, per_road)
-            road_dict.setdefault(per_road.section_start_node_id, {})
-            road_dict[per_road.section_start_node_id].setdefault(per_road.section_end_node_id, per_road)
-        all_path, all_window = cal_all_windows(graph_dict, onepath_inf, onepath_window, road_dict)
-        print(all_path)
-        print(all_window)
-        for per_path in vehicle_path:
-            per_path.delete()
-
-        vehicle_detail_dist = {}
-        vehicle_detail_dist[vehicle.vehicle_id] = []
-
-        for i in range(len(all_path)):
-            node = RoadNodes.objects.get(node_id=all_path[i])
-            node_arrival_time = all_window[i][0]
-            node_departure_time = all_window[i][1]
-            vehicle_true_path = VehiclePath(
-                vehicle=vehicle, node=node, node_arrival_time=node_arrival_time,
-                node_departure_time=node_departure_time
-            )
-            vehicle_detail_dist[vehicle.vehicle_id].append(model_to_dict(vehicle_true_path))
-            vehicle_true_path.save()
-            # vehicle_detail_list.append({'path_id': all_path[i], 'arrival_time': all_window[i][0], 'departure_time': all_window[i][1]})
-        return JsonResponse(vehicle_detail_dist)
+        vehicle_path_list = VehiclePath.objects.filter(vehicle=vehicle)
+        for node in vehicle_path_list:
+            node.__dict__.pop('_state')
+        context = [item.__dict__ for item in vehicle_path_list]
+        print(context)
+        return JsonResponse(context, safe=False)
 
 
 def flights_create(request):
@@ -358,7 +377,6 @@ def services_update(request):
 
 
 def service_delete(request, service_id):
-    service_id = json.loads(request.body)['id']
     try:
         is_succeed = Service.objects.get(id=service_id).delete()
         return JsonResponse({'id': service_id, 'is_succeed': 1}, safe=False)
@@ -370,3 +388,179 @@ def service_update(request, service_id):
     new_service_json = json.loads(request.body)
     is_succeed = Service.objects.filter(id=service_id).update(**new_service_json)
     return JsonResponse({'id': service_id, 'is_succeed': is_succeed}, safe=False)
+
+
+def instructions(request):
+    instructions_list = Instruction.objects.all()
+    context = []
+    for instruction in instructions_list:
+        instruction.__dict__.pop('_state')
+        context.append(instruction.__dict__)
+    print(context)
+    return JsonResponse(context, safe=False)
+
+
+def instruction_detail(request, instruction_id):
+    instruction = get_object_or_404(Instruction, pk=instruction_id)
+    instruction.__dict__.pop('_state')
+    return JsonResponse(model_to_dict(instruction), safe=False)
+
+
+def instruction_create(request):
+    if request.method == 'POST':
+        new_instruction_json = json.loads(request.body)
+        new_instruction = Instruction(**new_instruction_json)
+        new_instruction.save()
+        return do_instruction(new_instruction.id)
+        # return JsonResponse(model_to_dict(new_instruction), safe=False)
+
+
+def do_instruction(instruction_id):
+    instruction = get_object_or_404(Instruction, pk=instruction_id)
+    instruction_type = instruction_type_dict[instruction.instruction_type]
+    todo_function_name = 'instruction_' + instruction_type
+    return eval(todo_function_name)(instruction_id=instruction.id)
+
+
+def instruction_delete(request, instruction_id):
+    try:
+        is_succeed = Instruction.objects.get(id=instruction_id).delete()
+        return JsonResponse({'id': instruction_id, 'is_succeed': 1}, safe=False)
+    except Instruction.DoesNotExist:
+        return JsonResponse({'id': instruction_id, 'is_succeed': 0}, safe=False)
+
+
+def instruction_update(request, instruction_id):
+    new_instruction_json = json.loads(request.body)
+    is_succeed = Instruction.objects.filter(instruction_id=instruction_id).update(**new_instruction_json)
+    return JsonResponse({'instruction_id': instruction_id, 'is_succeed': is_succeed}, safe=False)
+
+
+def instruction_task_cancel(instruction_id):
+    print("Task Cancel!")
+    instruction = get_object_or_404(Instruction, pk=instruction_id)
+    flight_id = json.loads(instruction.instruction_content)['flight_id']
+    flight = get_object_or_404(Flight, flight_id=flight_id)
+    flight.delete()
+    return None
+
+
+def instruction_flight_arrival_time_change(instruction_id):
+    print("Arrival Time Change!")
+    try:
+        instruction = get_object_or_404(Instruction, pk=instruction_id)
+        flight_id = json.loads(instruction.instruction_content)['flight_id']
+        new_arrival_time = json.loads(instruction.instruction_content)['new_arrival_time']
+        flight = get_object_or_404(Flight, flight_id=flight_id)
+        flight.arrival_time = new_arrival_time
+        flight.save()
+
+        return JsonResponse({'message': 'Arrival Time Change Success!'}, safe=False)
+    except Http404:
+        return JsonResponse({'message': 'Instruction not found!'}, safe=False)
+
+
+def instruction_flight_parking_id_change(instruction_id):
+    print("Parking ID Change!")
+    try:
+        instruction = get_object_or_404(Instruction, pk=instruction_id)
+        flight_id = json.loads(instruction.instruction_content)['flight_id']
+        new_parking_id = json.loads(instruction.instruction_content)['new_parking_id']
+        flight = get_object_or_404(Flight, flight_id=flight_id)
+        flight.parking_id = new_parking_id
+        flight.save()
+
+        return JsonResponse({'message': 'Parking ID Change Success!'}, safe=False)
+    except Http404:
+        return JsonResponse({'message': 'Instruction not found!'}, safe=False)
+
+
+def get_vehicle_position(vehicle_id, current_time):
+    vehicle = get_object_or_404(Vehicle, vehicle_id=vehicle_id)
+    from_node = VehiclePath.objects.filter(Q(vehicle_id=vehicle_id) & Q(arrival_time__lte=current_time)).last()
+    to_node = VehiclePath.objects.filter(Q(vehicle_id=vehicle_id) & Q(arrival_time__gte=current_time)).first()
+
+    vehicle_position_x = (current_time - from_node.node_departure_time) / (
+            to_node.node_arrival_time - from_node.node_departure_time) * (
+                                 to_node.node.node_position_x - from_node.node.node_position_x) + from_node.node.node_position_x
+    vehicle_position_y = (current_time - from_node.node_departure_time) / (
+            to_node.node_arrival_time - from_node.node_departure_time) * (
+                                 to_node.node.node_position_y - from_node.node.node_position_y) + from_node.node.node_position_y
+    return from_node, to_node, vehicle_position_x, vehicle_position_y
+
+
+def instruction_vehicle_wait(instruction_id):
+    print("Vehicle Wait!")
+    try:
+        vehicle_speed = 400
+        instruction = get_object_or_404(Instruction, pk=instruction_id)
+        vehicle_id = instruction.instruction_content['vehicle_id']
+        wait_time = instruction.instruction_content['wait_time']
+        current_time = instruction.instruction_content['current_time']
+        vehicle = get_object_or_404(Vehicle, vehicle_id=vehicle_id)
+        next_service = VehiclePath.objects.filter(
+            Q(vehicle_id=vehicle_id) & ~Q(service_id=None) & Q(node_arrival_time__gt=current_time)).order_by(
+            'node_arrival_time').first()
+
+        solution = []
+        new_vehicle_list = Vehicle.objects.filter(Q(vehicle_status=1))
+        for new_vehicle in new_vehicle_list:
+            # new vehicle对应的所有未完成的服务
+            unfinished_service_node = VehiclePath.objects.filter(
+                Q(vehicle_id=new_vehicle.vehicle_id) & ~Q(service_id=None) & Q(node_arrival_time__gt=current_time))
+
+            for i in range(len(unfinished_service_node) - 1):
+                # 插入点的前一个和后一个service
+                _service = unfinished_service_node[i]
+                service_ = unfinished_service_node[i + 1]
+                # 如果该服务的结束时间晚于next_service的开始时间，则break
+                if _service.node_departure_time > get_object_or_404(Service,
+                                                                    id=next_service.service_id).latest_start_time:
+                    break
+
+                service = Service.objects.get(id=_service.service_id)
+
+                # 因插入操作而产生的距离（前点到next_service+next_service到后点）
+                distance = dijkstra(graph_dict, _service.node_id, next_service.node_id, 2) + \
+                           dijkstra(graph_dict, service_.node_id, next_service.node_id, 2)
+
+                # 路上时间和服务持续时间
+                delay_time = distance / vehicle_speed + next_service.node_arrival_time - next_service.node_departure_time
+                if new_vehicle.vehicle_id == vehicle.vehicle_id:
+                    delay_time += wait_time
+
+                time_loss = 0
+                for temp_service in unfinished_service_node[i + 1:]:
+                    changed_arrival_time = temp_service.node_arrival_time + delay_time
+                    latest_start_time = get_object_or_404(Service, id=temp_service.service_id).latest_start_time
+                    # 如果改变规划后服务开始时间晚于最晚开始时间，则计算time_loss
+                    if changed_arrival_time > latest_start_time:
+                        time_loss += changed_arrival_time - latest_start_time
+                solution.append(
+                    {'vehicle_id': new_vehicle.vehicle_id, 'next_srvice_id': next_service.service_id,
+                     '_service_id': _service.service_id, 'time_loss': time_loss,
+                     'distance': distance, 'total_loss': 10 * time_loss + 3 * distance})
+        solution.sort(key=lambda x: x['total_loss'])
+        print(solution)
+
+        return JsonResponse(solution[0], safe=False)
+    except Http404:
+        return JsonResponse({'message': 'Instruction not found!'}, safe=False)
+
+
+def instruction_vehicle_path_change(instruction_id):
+    return None
+
+
+def instruction_roadSection_change(instruction_id):
+    print("Road Section Change!")
+    try:
+        instruction = get_object_or_404(Instruction, pk=instruction_id)
+        section_id = json.loads(instruction.instruction_content)['section_id']
+        section = get_object_or_404(RoadSections, section_id=section_id)
+        section.section_availability = 0
+        section.save()
+
+        return JsonResponse({'message': 'Road Section Change Success!'}, safe=False)
+    except Http404:
+        return JsonResponse({'message': 'Instruction not found!'}, safe=False)

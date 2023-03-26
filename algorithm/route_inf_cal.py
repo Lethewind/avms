@@ -10,6 +10,7 @@ from algorithm.min_dis import dijkstra
 def cal_all_windows(graph, onepath_inf, onepath_window, road_dict):
     # 生成全部列表
     all_path_perv = []
+    # print(onepath_inf)
     all_path_perv.append(onepath_inf[0])
     all_path_win = []
     all_path_win.append(onepath_window[0])

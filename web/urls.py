@@ -22,7 +22,7 @@ urlpatterns = [
     path('vehicles/<str:vehicle_id>/', views.vehicle_detail, name='vehicle'),
     path('vehicles/<str:vehicle_id>/delete/', views.vehicle_delete, name='vehicle'),
     path('vehicles/<str:vehicle_id>/update/', views.vehicle_update, name='vehicle_path'),
-    path('vehicles/<str:vehicle_id>/path/', views.vehicle_path, name='vehicle_path'),
+    path('vehicles/<str:vehicle_id>/path/', views.vehicle_path_detail, name='vehicle_path'),
 
     # services
     path('services/', views.services, name='services'),
@@ -33,4 +33,23 @@ urlpatterns = [
     path('services/<str:service_id>/delete/', views.service_delete, name='service'),
     path('services/<str:service_id>/update/', views.service_update, name='service_path'),
     path('services_generation', views.services_generation, name='services_generation'),
+
+    # instructions
+    path('instructions/', views.instructions, name='instructions'),
+    path('instructions/create/', views.instruction_create, name='instruction_create'),
+    path('instructions/<str:instruction_id>/', views.instruction_detail, name='instruction'),
+    path('instructions/<str:instruction_id>/delete/', views.instruction_delete, name='instruction'),
+    path('instructions/<str:instruction_id>/update/', views.instruction_update, name='instruction_path'),
+
+    # instructions-do
+    # path('instructions/task_cancel/', views.instruction_task_cancel, name='instruction_task_cancel'),
+    # path('instructions/flight_arrival_time_change/', views.instruction_flight_arrival_time_change,
+    #      name='instruction_flight_arrival_time_change'),
+    # path('instructions/flight_parking_id_change/', views.flight_parking_id_change,
+    #      name='flight_parking_id_change'),
+    # path('instructions/vehicle_wait/', views.instruction_vehicle_wait, name='instruction_vehicle_wait'),
+    # path('instructions/vehicle_path_change/', views.instruction_vehicle_path_change,
+    #      name='instruction_vehicle_path_change'),
+    # path('instructions/roadsection_change/', views.instruction_roadSection_change,
+    #      name='instruction_roadSection_change'),
 ]
