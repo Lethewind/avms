@@ -181,7 +181,15 @@ def vehicle_scheduling(request):
                 Vehiclepath_dict[vehicle.vehicle_id].append(model_to_dict(vehicle_path))
                 vehicle_path.save()
 
-            get_vehicle_true_path(vehicle.vehicle_id)
+            vehicle_path = VehiclePath.objects.filter(vehicle=vehicle)
+            true_path_list = get_vehicle_true_path(vehicle, vehicle_path)
+
+            for true_path in true_path_list:
+                if VehiclePath.objects.filter(
+                        Q(vehicle_id=true_path['vehicle_id']) & Q(node_id=true_path['node_id']) & ~Q(
+                            service_id__isnull=True)).exists():
+                    pass
+                VehiclePath(**true_path).save()
 
         services_unscheduled.update(is_scheduled=True)
         return JsonResponse(Vehiclepath_dict)
@@ -212,9 +220,7 @@ def vehicle_detail(request, vehicle_id):
     return JsonResponse(context, safe=False)
 
 
-def get_vehicle_true_path(vehicle_id):
-    vehicle = get_object_or_404(Vehicle, pk=vehicle_id)
-    vehicle_path = VehiclePath.objects.filter(vehicle=vehicle)
+def get_vehicle_true_path(vehicle, vehicle_path):
     onepath_inf = []
     onepath_window = []
     for per_path in vehicle_path:
@@ -230,25 +236,19 @@ def get_vehicle_true_path(vehicle_id):
 
     all_path, all_window = cal_all_windows(graph_dict, onepath_inf, onepath_window, road_dict)
 
-    print(all_path)
-    print(all_window)
-
-    # for per_path in vehicle_path:
-    #     per_path.delete()
-
+    true_path_list = []
     for i in range(len(all_path)):
         node = RoadNodes.objects.get(node_id=all_path[i])
-
-        if VehiclePath.objects.filter(vehicle=vehicle, node=node).exists():
-            pass
-
         node_arrival_time = all_window[i][0]
         node_departure_time = all_window[i][1]
         vehicle_true_path = VehiclePath(
             vehicle=vehicle, node=node, node_arrival_time=node_arrival_time,
             node_departure_time=node_departure_time
         )
-        vehicle_true_path.save()
+        # vehicle_true_path.save()
+        vehicle_true_path.__dict__.pop('_state')
+        true_path_list.append(vehicle_true_path.__dict__)
+    return true_path_list
 
 
 def vehicle_path_detail(request, vehicle_id):
@@ -521,11 +521,16 @@ def instruction_vehicle_wait(instruction_id):
                 service = Service.objects.get(id=_service.service_id)
 
                 # 因插入操作而产生的距离（前点到next_service+next_service到后点）
-                distance = dijkstra(graph_dict, _service.node_id, next_service.node_id, 2) + \
-                           dijkstra(graph_dict, service_.node_id, next_service.node_id, 2)
+                from_distance = dijkstra(graph_dict, _service.node_id, next_service.node_id, 2)
+                to_distance = dijkstra(graph_dict, service_.node_id, next_service.node_id, 2)
+                distance = from_distance + to_distance
+
+                new_arrival_time = int(_service.node_departure_time + from_distance / vehicle_speed)
+                new_departure_time = new_arrival_time + next_service.node_arrival_time - next_service.node_departure_time
 
                 # 路上时间和服务持续时间
                 delay_time = distance / vehicle_speed + next_service.node_arrival_time - next_service.node_departure_time
+                delay_time = max(delay_time, 0)
                 if new_vehicle.vehicle_id == vehicle.vehicle_id:
                     delay_time += wait_time
 
@@ -538,12 +543,41 @@ def instruction_vehicle_wait(instruction_id):
                         time_loss += changed_arrival_time - latest_start_time
                 solution.append(
                     {'vehicle_id': new_vehicle.vehicle_id, 'next_srvice_id': next_service.service_id,
-                     '_service_id': _service.service_id, 'time_loss': time_loss,
+                     '_service_id': _service.service_id, 'new_arrival_time': new_arrival_time,
+                     'new_departure_time': new_departure_time, 'delay_time': delay_time, 'time_loss': time_loss,
                      'distance': distance, 'total_loss': 10 * time_loss + 3 * distance})
         solution.sort(key=lambda x: x['total_loss'])
-        print(solution)
 
-        return JsonResponse(solution[0], safe=False)
+        best_solution = solution[0]
+        new_vehicle = Vehicle.objects.get(vehicle_id=best_solution['vehicle_id'])
+        new_path = VehiclePath(vehicle_id=best_solution['vehicle_id'], service_id=best_solution['next_srvice_id'],
+                               node_id=next_service.node_id, node_arrival_time=best_solution['new_arrival_time'],
+                               node_departure_time=best_solution['new_departure_time'])
+        path_need_update = VehiclePath.objects.filter(
+            Q(vehicle_id=best_solution['vehicle_id']) & Q(node_arrival_time__lte=best_solution['new_arrival_time']))
+        for path in path_need_update:
+            path.node_arrival_time += int(best_solution['delay_time'])
+            path.node_departure_time += int(best_solution['delay_time'])
+            path.save()
+
+        new_path.save()
+        path_list = VehiclePath.objects.filter(vehicle_id=best_solution['vehicle_id'])
+        true_path_list = get_vehicle_true_path(new_vehicle, path_list)
+
+        for true_path in true_path_list:
+            if VehiclePath.objects.filter(
+                    Q(vehicle_id=true_path['vehicle_id']) & Q(node_id=true_path['node_id']) & ~Q(
+                        service_id__isnull=True)).exists():
+                pass
+            VehiclePath(**true_path).save()
+
+        saved_path_list = VehiclePath.objects.filter(vehicle_id=best_solution['vehicle_id'])
+        saved_path_dict = []
+        for path in saved_path_list:
+            path.__dict__.pop('_state')
+            saved_path_dict.append(path.__dict__)
+
+        return JsonResponse(saved_path_dict, safe=False)
     except Http404:
         return JsonResponse({'message': 'Instruction not found!'}, safe=False)
 
