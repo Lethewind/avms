@@ -476,17 +476,22 @@ def instruction_flight_parking_id_change(instruction_id):
 
 
 def get_vehicle_position(vehicle_id, current_time):
-    vehicle = get_object_or_404(Vehicle, vehicle_id=vehicle_id)
-    from_node = VehiclePath.objects.filter(Q(vehicle_id=vehicle_id) & Q(arrival_time__lte=current_time)).last()
-    to_node = VehiclePath.objects.filter(Q(vehicle_id=vehicle_id) & Q(arrival_time__gte=current_time)).first()
+    try:
+        vehicle = get_object_or_404(Vehicle, vehicle_id=vehicle_id)
+        from_node = VehiclePath.objects.filter(Q(vehicle_id=vehicle_id) & Q(node_arrival_time__lte=current_time)).last()
+        to_node = VehiclePath.objects.filter(Q(vehicle_id=vehicle_id) & Q(node_arrival_time__gte=current_time)).first()
 
-    vehicle_position_x = (current_time - from_node.node_departure_time) / (
-            to_node.node_arrival_time - from_node.node_departure_time) * (
-                                 to_node.node.node_position_x - from_node.node.node_position_x) + from_node.node.node_position_x
-    vehicle_position_y = (current_time - from_node.node_departure_time) / (
-            to_node.node_arrival_time - from_node.node_departure_time) * (
-                                 to_node.node.node_position_y - from_node.node.node_position_y) + from_node.node.node_position_y
-    return from_node, to_node, vehicle_position_x, vehicle_position_y
+        if from_node is None or to_node is None:
+            return None, None, None, None
+        vehicle_position_x = (current_time - from_node.node_departure_time) / (
+                to_node.node_arrival_time - from_node.node_departure_time) * (
+                                     to_node.node.node_position_x - from_node.node.node_position_x) + from_node.node.node_position_x
+        vehicle_position_y = (current_time - from_node.node_departure_time) / (
+                to_node.node_arrival_time - from_node.node_departure_time) * (
+                                     to_node.node.node_position_y - from_node.node.node_position_y) + from_node.node.node_position_y
+        return from_node.node_id, to_node.node_id, vehicle_position_x, vehicle_position_y
+    except Http404:
+        return None, None, None, None
 
 
 def instruction_vehicle_wait(instruction_id):
@@ -598,3 +603,44 @@ def instruction_roadSection_change(instruction_id):
         return JsonResponse({'message': 'Road Section Change Success!'}, safe=False)
     except Http404:
         return JsonResponse({'message': 'Instruction not found!'}, safe=False)
+
+
+def scene_status(request):
+    vehicle_list = Vehicle.objects.all()
+    current_time = json.loads(request.body)['current_time']
+    vehicle_status_list = []
+    for vehicle in vehicle_list:
+
+        from_node, to_node, vehicle_position_x, vehicle_position_y = get_vehicle_position(vehicle_id=vehicle.vehicle_id,
+                                                                                          current_time=current_time)
+        if from_node is None or to_node is None:
+            vehicle_position_x = RoadNodes.objects.get(node_function='-1').node_position_x
+            vehicle_position_y = RoadNodes.objects.get(node_function='-1').node_position_y
+        vehicle_status_list.append(
+            {'vehicle_id': vehicle.vehicle_id, 'from_node': from_node, 'to_node': to_node,
+             'vehicle_position_x': vehicle_position_x, 'vehicle_position_y': vehicle_position_y})
+    return JsonResponse(vehicle_status_list, safe=False)
+
+
+def time_data_cal(request):
+    time_list = []
+    for vehicle in Vehicle.objects.all():
+
+        delay_time = 0
+        service_time = 0
+        wait_time = 0
+        path_list = VehiclePath.objects.filter(vehicle=vehicle)
+        if path_list.exists():
+            path_list = path_list.order_by('node_arrival_time')
+            for path in path_list:
+                if path.service_id is not None:
+                    wait_time += max(path.service.earliest_start_time - path.node_arrival_time, 0)
+                    service_time += path.service.minimum_duration
+                    delay_time += max(path.service.latest_start_time - path.node_arrival_time, 0)
+
+            travel_time = path_list[len(path_list) - 1].node_departure_time - path_list[
+                0].node_arrival_time - service_time
+            time_list.append({'vehicle_id': vehicle.vehicle_id, 'delay_time': delay_time, 'service_time': service_time,
+                              'wait_time': wait_time, 'travel_time': travel_time})
+
+    return JsonResponse(time_list, safe=False)
